@@ -1,12 +1,14 @@
 # Football Match Outcome Predictor
 
-An end-to-end machine learning project covering the collection, processing, and prediction of football match outcomes across 55 leagues and competitions.
+An end-to-end machine learning project covering the collection, processing, and prediction of football match outcomes across 37 competitions, spanning 16,688 matches scraped from us.soccerway.com across 37 domestic leagues, cups, and international competitions, covering the 2024–2025 and 2025–2026 seasons.  
 
-The project is structured in three stages: a multi-stage web scraper that collects detailed match data from us.soccerway.com, an exploratory analysis of the resulting dataset, and a machine learning pipeline that predicts match outcomes — Home Win, Draw, or Away Win — using only pre-match information derived from each team's recent form.
+The project is structured in three stages: a multi-stage web scraper that collects detailed per-match data, an exploratory analysis of the resulting 109-feature dataset, and a machine learning pipeline that predicts match outcomes — Home Win, Draw, or Away Win — across two distinct modelling approaches.  
 
-Rather than relying on in-match statistics such as shots or possession (which are unavailable before kickoff), the prediction model engineers rolling features from each team's last 5 matches and compares five classification models — Logistic Regression, Random Forest, XGBoost, LightGBM, and SVM — evaluated using per-class F1 score across all three outcome classes.
+The core modelling challenge is a practical one: in-match statistics such as shots, possession, and xG are only available after a game has started, making them useless for real pre-match prediction.  
+To address this, the pipeline engineers rolling features from each team's last 5 matches as a proxy for form, and compares seven classifiers — Logistic Regression, Linear SVM, K-Nearest Neighbours, Gaussian Naive Bayes, XGBoost, and an Artificial Neural Network — across both an in-match benchmark and a pre-match model (the genuine real-world use case). Models are evaluated using per-class F1 score across all three outcome classes.
 
-**Dataset:** [kaggle.com/omarameen99](https://www.kaggle.com/omarameen99)
+**Dataset:** [kaggle.com/datasets/omarameen99/football-matches-data-from-soccerway](https://www.kaggle.com/datasets/omarameen99/football-matches-data-from-soccerway)
+
 ---
 
 ## Table of Contents
@@ -19,8 +21,10 @@ Rather than relying on in-match statistics such as shots or possession (which ar
   - [Full Scraper](#full-scraper)
   - [Retry Low Fields](#retry-low-fields)
   - [Combine CSVs](#combine-csvs)
-- [2. Analysis](#2-analysis)
-- [3. Machine Learning](#3-machine-learning)
+- [2. Exploratory Data Analysis](#2-exploratory-data-analysis)
+- [3. Match Outcome Modelling](#3-match-outcome-modelling)
+  - [In-Match Model (Benchmark)](#in-match-model-benchmark)
+  - [Pre-Match Model (Real-World Use Case)](#pre-match-model-real-world-use-case)
 
 ---
 
@@ -318,12 +322,58 @@ python combine_csv.py --folder ../scraped_data --output ../merged.csv --season
 
 ---
 
-## 2. Analysis
+## 2. Exploratory Data Analysis
 
-eda
+**Notebook:** `football_eda.ipynb`
+ 
+A structured analysis of the full dataset — 16,688 matches, 109 columns, 37 competitions, 1,353 teams — covering data quality, match patterns, team and formation statistics, and feature relationships.
+ 
+**Dataset Overview** — shape, column inventory, data types, and duplicate check, followed by derived features (total goals, goal differential, total shots, total xG) and a numeric summary of core match statistics.
+ 
+**Missing Data Analysis** — column-level and row-level audit of missingness. Columns are categorised by missing rate (complete / low / moderate / high / critical) and visualised as bar and circular bar plots. Home/away column pairs were confirmed to have symmetric missingness. A specific investigation into `headed_goals` found it was not scraped when both teams scored zero headed goals — structural missingness, not random noise. The row-level analysis showed the majority of rows have their core and advanced features fully populated.
+ 
+**Outlier Check** — IQR-based detection across key numeric columns (goals, xG, shots, possession, cards, fouls), reporting outlier counts and percentages per column to confirm the data is within realistic footballing ranges.
+ 
+**League & Season Distribution** — match counts broken down by league and season.
+ 
+**Match Outcomes & Scoring** — distribution of Home Win / Draw / Away Win results; goals per match distribution; score frequency heatmap. Home wins account for the plurality of outcomes (~44.7%), with draws the least common (~24.7%), and (~30.6%) away wins.
+ 
+**Home Advantage Analysis** — home win rate examined per league to assess whether the home advantage effect is consistent or varies meaningfully across competitions and regions.
+ 
+**Shooting & xG Analysis** — shots on target vs goals relationship; xG vs actual goals to identify over- and under-performing teams; shot conversion rate distributions.
+ 
+**Possession & Passing** — possession percentage distributions split by match result; passing accuracy compared between winning and losing sides.
+ 
+**Discipline** — yellow and red card distributions; foul counts by result; league-level discipline comparisons.
+ 
+**Team Formations** — most common formations across the dataset; win rate and goals per match by formation, smoothed with a Bayesian prior and filtered to formations with at least 700 appearances to avoid small-sample distortion.
+ 
+**Correlation Heatmap** — lower-triangle Pearson correlation matrix across 20 key features including goals, xG, shots, possession, passing accuracy, corners, cards, and big chances.
+ 
+**Top Teams Analysis** — top 15 teams by total goals scored and by Bayesian-smoothed win rate (minimum 10 games); bubble chart of goals scored vs conceded with win rate as colour and matches played as bubble size.  
 
 ---
 
-## 3. Machine Learning
+## 3. Match Outcome Modelling
 
-model
+**Notebooks:** `in_match_data_based_models.ipynb` · `sliding_window_based_models.ipynb`
+
+Both notebooks share the same preprocessing pipeline (steps 1–9): row filtering (dropping rows with >40% missing values), removal of outcome and identifier columns, column-level missingness re-check, median/mode imputation, datetime and kickoff time feature extraction, categorical label encoding, and final validation checks. They diverge in how they construct the feature set used for training.
+
+### In-Match Model (Benchmark)
+
+**Notebook:** `in_match_data_based_models.ipynb`
+
+After the shared preprocessing, this pipeline retains all in-match statistics — shots, xG, possession, corners, cards, fouls, passing accuracy, and so on — and engineers differential features (home minus away) for each stat pair. These are combined with contextual features (league, round, formation, attendance, kickoff time) to produce the final feature matrix `df_preprocessed`.
+
+This is a **benchmark**, not a deployable predictor. Because in-match stats are only available after kickoff, a model trained on them cannot be used to predict results before a match starts. Its purpose is to establish an upper-bound accuracy ceiling: how well can the outcome be predicted when all match information is available?
+
+### Pre-Match Model (Real-World Use Case)
+
+**Notebook:** `sliding_window_based_models.ipynb`
+
+This pipeline is the real-world prediction scenario. After the shared preprocessing steps, all in-match statistics are dropped entirely. Instead, the pipeline reconstructs each team's recent form using a **sliding window of their last 5 matches** (regardless of home or away). For each match, rolling features are computed for both the home and the away team, capturing metrics such as recent points, goals scored and conceded, xG, shot volume, and passing accuracy over the preceding five appearances. These rolling features are combined with the pre-match contextual features (league, round, formation, kick-off time, attendance, team ratings) to produce `df_sliding`.
+
+Because no information from the match itself is used, this model can genuinely be applied before a game kicks off.
+
+**Both notebooks** train and evaluate the same six classifiers — Logistic Regression, Linear SVM, K-Nearest Neighbours, Gaussian Naive Bayes, XGBoost, and an Artificial Neural Network — using a strict chronological 80/20 train/test split with no random shuffling, to preserve temporal order and prevent future data leaking into training. Models are compared across accuracy, macro precision, macro recall, macro F1, ROC-AUC (one-vs-rest), and per-class F1 for Home Win, Draw, and Away Win.
